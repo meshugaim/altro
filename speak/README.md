@@ -20,6 +20,8 @@ voice stack (Riva ASR + NIM-hosted LLM + Magpie TTS).
 All three clients share one PTT screen (in `apps/mobile/src`) and talk to one
 Next.js server that holds `NVIDIA_API_KEY` and proxies ASR / LLM / TTS.
 
+For deployment, see [DEPLOY.md](./DEPLOY.md).
+
 ## Quickstart
 
 ```bash

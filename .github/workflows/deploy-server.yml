@@ -1,0 +1,39 @@
+name: Deploy speak server
+
+on:
+  push:
+    branches:
+      - main
+      - claude/altro-speak-voice-app-QdWI6
+    paths:
+      - "speak/apps/server/**"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: speak/apps/server
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Verify token
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error::RAILWAY_TOKEN secret is not set. See speak/DEPLOY.md step 3."
+            exit 1
+          fi
+
+      - name: Deploy to Railway
+        run: railway up --service speak --detach
