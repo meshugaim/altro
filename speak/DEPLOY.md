@@ -1,9 +1,40 @@
 # Deploying speak
 
-Two paths. Option A is more "autonomous from here on" — every push auto-deploys
-via GitHub Actions. Option B has fewer moving parts but the same end state.
+The server is a Next.js app, so **Vercel (Option V) is the simplest host** — it
+deploys Next.js natively. Railway (Options A/B) also works if you prefer it.
 
-Pick one. Don't do both.
+Pick one. Don't do several.
+
+---
+
+## Option V — Vercel (Recommended for the Next.js server)
+
+**One-time setup (~2 min in the browser).**
+
+1. Go to https://vercel.com/new and log in with GitHub.
+2. **Import** the `aurelius-meshugaim/altro` repo. Authorize Vercel on it if asked.
+3. On the configure screen:
+   - **Root Directory**: click **Edit** → set to `speak/apps/server`
+   - **Branch**: switch to `claude/altro-speak-voice-app-QdWI6`
+     (until it's merged to `main`)
+   - Framework preset auto-detects **Next.js** (the `vercel.json` confirms it).
+4. **Environment Variables** → add `NVIDIA_API_KEY` = `nvapi-...`
+5. Click **Deploy**. You get a `https://<project>.vercel.app` URL automatically —
+   no separate "generate domain" step.
+
+Every push to the branch redeploys. Preview URLs are created per-branch.
+
+**Smoke test:**
+
+```bash
+curl https://<project>.vercel.app/
+curl -X POST https://<project>.vercel.app/api/chat \
+  -H "Content-Type: application/json" -d '{"text":"hello"}'
+```
+
+> Note: Vercel serverless functions cap request bodies at ~4.5 MB and runtime at
+> 10 s (Hobby). Fine for short push-to-talk clips and chat. Long audio would need
+> Pro or a different ASR path.
 
 ---
 
