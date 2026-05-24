@@ -1,0 +1,19 @@
+{
+  "name": "speak",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Voice-to-voice push-to-talk app for web, iOS, and desktop, powered by NVIDIA ACE / NIM",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace apps/server run dev",
+    "dev:mobile": "npm --workspace apps/mobile run start",
+    "web": "npm --workspace apps/mobile run web",
+    "ios": "npm --workspace apps/mobile run ios",
+    "desktop": "npm --workspace apps/desktop run start",
+    "build:web": "npm --workspace apps/mobile run build:web",
+    "build:desktop": "npm run build:web && npm --workspace apps/desktop run build"
+  }
+}

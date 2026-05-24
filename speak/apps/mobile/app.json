@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Speak",
+    "slug": "speak",
+    "scheme": "speak",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.askeffi.speak",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Speak uses the microphone for push-to-talk voice conversations."
+      }
+    },
+    "android": {
+      "package": "ai.askeffi.speak",
+      "permissions": ["RECORD_AUDIO"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-av",
+        { "microphonePermission": "Speak uses the microphone for push-to-talk voice conversations." }
+      ]
+    ],
+    "extra": {
+      "speakServerUrl": "http://localhost:3001"
+    }
+  }
+}

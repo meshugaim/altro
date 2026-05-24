@@ -1,0 +1,23 @@
+{
+  "name": "@speak/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ai.askeffi.speak",
+    "productName": "Speak",
+    "directories": { "output": "../../electron-dist" },
+    "files": ["main.js", "preload.js", "web-build/**/*"],
+    "mac": { "target": ["dmg"], "category": "public.app-category.productivity" },
+    "win": { "target": ["nsis"] },
+    "linux": { "target": ["AppImage"] }
+  }
+}
