@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stones</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Stones</h1>
+    <p class="tagline">A quiet collection. Click any stone to wander through its skies.</p>
+  </header>
+
+  <main id="gallery" class="gallery" aria-label="Stone gallery"></main>
+
+  <div id="lightbox" class="lightbox" hidden aria-hidden="true" role="dialog" aria-modal="true">
+    <button class="lightbox-close" aria-label="Close">&times;</button>
+
+    <div class="slider">
+      <button class="slider-nav prev" aria-label="Previous background">&#10094;</button>
+      <div class="slider-track" id="sliderTrack"></div>
+      <button class="slider-nav next" aria-label="Next background">&#10095;</button>
+    </div>
+
+    <div class="dots" id="sliderDots" aria-label="Background selector"></div>
+
+    <form class="prompt-bar" id="promptForm" autocomplete="off">
+      <input
+        type="text"
+        id="promptInput"
+        class="prompt-input"
+        placeholder="Place this stone somewhere… e.g. on a mossy riverbank at dawn"
+        aria-label="Background prompt"
+      />
+      <button type="submit" class="prompt-submit">Generate</button>
+    </form>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
