@@ -7,9 +7,14 @@
   "scripts": {
     "probe": "node src/probe.js",
     "auth": "node src/auth.js",
-    "fetch": "node src/fetch.js"
+    "fetch": "node src/fetch.js",
+    "crawl": "node src/crawl.js",
+    "learn": "node src/learn.js",
+    "solve": "node src/solve.js",
+    "tutor": "node src/tutor.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "latest",
     "playwright": "^1.49.0"
   }
 }
