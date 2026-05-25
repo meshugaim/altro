@@ -2,7 +2,7 @@
   "name": "speak",
   "private": true,
   "version": "0.0.1",
-  "description": "Voice-to-voice push-to-talk app for web, iOS, and desktop, powered by NVIDIA ACE / NIM",
+  "description": "Full-duplex voice-to-voice app powered by NVIDIA PersonaPlex (Moshi) speech-to-speech",
   "workspaces": [
     "apps/*",
     "packages/*"

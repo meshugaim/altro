@@ -1,100 +1,65 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { SpeakClient, type ChatMessage } from "@speak/client";
+import type { SpeakConfig } from "@speak/client";
 
-import PttButton from "../components/PttButton";
 import { SERVER_URL } from "../lib/config";
-import { startRecording, playAudioBlob, type RecordingHandle } from "../lib/voice";
 
-const client = new SpeakClient(SERVER_URL);
-
-type Turn = { role: "user" | "assistant"; text: string };
-
+// PersonaPlex is a full-duplex, browser-based streaming client (mic + speaker
+// over a WebSocket). The working real-time experience lives in the web client
+// served by the speak server. Native (iOS) streaming needs a dedicated Opus
+// audio module and is the next milestone — for now we hand off to the browser.
 export default function SpeakScreen() {
-  const [recording, setRecording] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Ready");
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const handleRef = useRef<RecordingHandle | null>(null);
+  const [config, setConfig] = useState<SpeakConfig | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const onPressIn = useCallback(async () => {
-    if (busy || recording) return;
-    setStatus("Listening…");
-    try {
-      handleRef.current = await startRecording();
-      setRecording(true);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
-  }, [busy, recording]);
-
-  const onPressOut = useCallback(async () => {
-    if (!recording || !handleRef.current) return;
-    const handle = handleRef.current;
-    handleRef.current = null;
-    setRecording(false);
-    setBusy(true);
-    try {
-      setStatus("Transcribing…");
-      const audio = await handle.stop();
-      const userText = (await client.asr(audio)).trim();
-      if (!userText) {
-        setStatus("Didn't catch that");
-        return;
-      }
-      const userTurn: Turn = { role: "user", text: userText };
-      setTurns((prev) => [...prev, userTurn]);
-
-      setStatus("Thinking…");
-      const history: ChatMessage[] = [...turns, userTurn].map((t) => ({ role: t.role, content: t.text }));
-      const reply = (await client.chat(history)).trim();
-      setTurns((prev) => [...prev, { role: "assistant", text: reply }]);
-
-      setStatus("Speaking…");
-      const speech = await client.tts(reply);
-      await playAudioBlob(speech);
-
-      setStatus("Ready");
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [recording, turns]);
-
-  // Electron global PTT hotkey (preload dispatches a "speak:ptt" CustomEvent).
   useEffect(() => {
-    if (Platform.OS !== "web") return;
-    const handler = () => {
-      if (recording) onPressOut();
-      else if (!busy) onPressIn();
-    };
-    window.addEventListener("speak:ptt", handler as EventListener);
-    return () => window.removeEventListener("speak:ptt", handler as EventListener);
-  }, [recording, busy, onPressIn, onPressOut]);
+    fetch(`${SERVER_URL}/api/config`)
+      .then((r) => r.json())
+      .then(setConfig)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  const open = () => {
+    if (Platform.OS === "web") window.location.assign(SERVER_URL);
+    else Linking.openURL(SERVER_URL);
+  };
+
+  const ready = Boolean(config?.wsBase);
 
   return (
     <SafeAreaView style={styles.root}>
       <View style={styles.header}>
         <Text style={styles.title}>speak</Text>
-        <Text style={styles.status}>{status}</Text>
+        <Text style={styles.subtitle}>full-duplex voice · powered by PersonaPlex</Text>
       </View>
 
-      <ScrollView style={styles.transcript} contentContainerStyle={styles.transcriptContent}>
-        {turns.length === 0 ? (
-          <Text style={styles.placeholder}>Hold the button (or spacebar) and start talking.</Text>
+      <View style={styles.body}>
+        {error ? (
+          <Text style={styles.error}>config: {error}</Text>
+        ) : !config ? (
+          <Text style={styles.muted}>Loading config…</Text>
+        ) : ready ? (
+          <>
+            <Text style={styles.muted}>Voice: {config.defaultVoice}</Text>
+            <Text style={styles.persona} numberOfLines={4}>
+              {config.defaultPersona}
+            </Text>
+            <Text style={styles.note}>
+              Real-time conversation runs in the browser. Tap below to open the voice client.
+            </Text>
+          </>
         ) : (
-          turns.map((t, i) => (
-            <View key={i} style={[styles.bubble, t.role === "user" ? styles.userBubble : styles.assistantBubble]}>
-              <Text style={t.role === "user" ? styles.userText : styles.assistantText}>{t.text}</Text>
-            </View>
-          ))
+          <Text style={styles.error}>
+            Server not configured. Set PERSONAPLEX_WS_URL on the speak server.
+          </Text>
         )}
-      </ScrollView>
+      </View>
 
       <View style={styles.buttonWrap}>
-        <PttButton isRecording={recording} isBusy={busy} onPressIn={onPressIn} onPressOut={onPressOut} />
+        <TouchableOpacity style={[styles.button, !ready && styles.buttonDisabled]} onPress={open} disabled={!ready}>
+          <Text style={styles.buttonText}>Open voice chat</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -102,16 +67,16 @@ export default function SpeakScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#0e1014" },
-  header: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 8 },
-  title: { color: "white", fontSize: 22, fontWeight: "700" },
-  status: { color: "#9aa0b4", fontSize: 13, marginTop: 4 },
-  transcript: { flex: 1 },
-  transcriptContent: { padding: 24, gap: 10 },
-  placeholder: { color: "#5a6080", fontSize: 14, textAlign: "center", marginTop: 40 },
-  bubble: { maxWidth: "85%", padding: 12, borderRadius: 14 },
-  userBubble: { alignSelf: "flex-end", backgroundColor: "#5468ff" },
-  assistantBubble: { alignSelf: "flex-start", backgroundColor: "#1c2030" },
-  userText: { color: "white", fontSize: 15 },
-  assistantText: { color: "#e6e8f0", fontSize: 15 },
+  header: { paddingHorizontal: 24, paddingTop: 16, paddingBottom: 8 },
+  title: { color: "white", fontSize: 24, fontWeight: "700" },
+  subtitle: { color: "#9aa0b4", fontSize: 13, marginTop: 4 },
+  body: { flex: 1, paddingHorizontal: 24, justifyContent: "center", gap: 12 },
+  muted: { color: "#9aa0b4", fontSize: 14 },
+  persona: { color: "#e6e8f0", fontSize: 15, lineHeight: 21 },
+  note: { color: "#5a6080", fontSize: 13, marginTop: 8 },
+  error: { color: "#ff7a90", fontSize: 14 },
   buttonWrap: { alignItems: "center", paddingVertical: 28 },
+  button: { backgroundColor: "#5468ff", paddingHorizontal: 32, paddingVertical: 16, borderRadius: 14 },
+  buttonDisabled: { backgroundColor: "#3a3f55" },
+  buttonText: { color: "white", fontSize: 16, fontWeight: "600" },
 });
