@@ -1,60 +1,70 @@
 # speak
 
-Push-to-talk voice-to-voice app for **web, iOS, and desktop**, powered by NVIDIA's
-voice stack (Riva ASR + NIM-hosted LLM + Magpie TTS).
+Full-duplex, voice-to-voice app powered by **NVIDIA PersonaPlex** — a real-time
+speech-to-speech model (Moshi-based) with text-prompted personas and selectable
+voices.
+
+Unlike a turn-based pipeline (record → transcribe → LLM → synthesize), PersonaPlex
+is a single end-to-end model: you stream microphone audio in and hear the
+assistant speak back, simultaneously, over one WebSocket.
 
 ## Architecture
 
 ```
-┌──────────────────────────┐    audio    ┌────────────────────────┐
-│ apps/mobile (Expo)       │ ──────────► │ apps/server (Next.js)  │
-│  • iOS native            │             │  /api/asr  → Riva ASR  │
-│  • Web (RN Web)          │ ◄────────── │  /api/chat → NIM LLM   │
-└──────────────────────────┘   audio     │  /api/tts  → Magpie    │
-┌──────────────────────────┐             └────────────────────────┘
-│ apps/desktop (Electron)  │ ──────────►        (holds API key)
-│  wraps the web build     │
+┌──────────────────────────┐  Opus audio (WebSocket /api/chat)  ┌────────────────────────┐
+│ Web client (browser)     │ ─────────────────────────────────► │ PersonaPlex server     │
+│  • mic → Opus → stream   │                                     │  (GPU host)            │
+│  • Opus ← speaker stream │ ◄───────────────────────────────── │  python -m moshi.server│
+└──────────────────────────┘   full-duplex, 24 kHz mono Opus     └────────────────────────┘
+         ▲
+         │ GET /api/config  (which GPU host / voice / persona)
+         │
+┌──────────────────────────┐
+│ speak server (Next.js)   │  hands the client its config; the audio stream
+│  apps/server             │  goes browser → GPU host directly.
 └──────────────────────────┘
 ```
 
-All three clients share one PTT screen (in `apps/mobile/src`) and talk to one
-Next.js server that holds `NVIDIA_API_KEY` and proxies ASR / LLM / TTS.
+- **`apps/server`** (Next.js) serves the web client and a `/api/config` endpoint.
+  It holds the GPU host URL / default voice / default persona in env so they
+  aren't baked into the bundle. The audio stream itself is browser ↔ GPU host.
+- **`packages/client`** is the shared protocol: WebSocket frame encode/decode,
+  the `/api/chat` URL builder, voice list, and defaults.
+- **`apps/mobile`** (Expo) currently hands off to the web client; native
+  (iOS) full-duplex streaming needs a dedicated Opus audio module — the next
+  milestone.
 
-For deployment, see [DEPLOY.md](./DEPLOY.md).
+## The GPU requirement
+
+PersonaPlex runs the model itself, so it needs a GPU host. Vercel/Railway can
+serve `apps/server` (it's just config + static client), but the **PersonaPlex
+server must run on a GPU** (Brev / Lambda / RunPod / your own box). See
+[DEPLOY.md](./DEPLOY.md).
 
 ## Quickstart
 
 ```bash
-# 1. Install
+# 1. Stand up PersonaPlex on a GPU host (see DEPLOY.md), note its wss:// URL.
+
+# 2. Install
 npm install
 
-# 2. Configure
+# 3. Configure
 cp apps/server/.env.example apps/server/.env.local
-# Edit apps/server/.env.local and set NVIDIA_API_KEY
+#   set PERSONAPLEX_WS_URL=wss://<gpu-host>:8998
 
-# 3. Run the server (port 3001)
+# 4. Run the web client (port 3001)
 npm run dev:server
-
-# 4. Run a client (pick one):
-npm run web         # browser at http://localhost:8081
-npm run ios         # iOS simulator (requires Xcode)
-npm run desktop     # Electron — first run: npm run build:web
+#   open http://localhost:3001 → pick a voice/persona → Start talking
 ```
 
-## Push-to-talk
+## Voices & persona
 
-- **Web / desktop**: hold the on-screen button **or** hold the spacebar
-- **iOS**: hold the on-screen button
-- **Desktop (Electron)**: global hotkey `CommandOrControl+Shift+Space`
+- **Voice**: a voice-embedding file (`NATF0.pt`, `VARM1.pt`, …) shipped by
+  PersonaPlex in `voices.tgz`. Choose the default with `PERSONAPLEX_VOICE`, or
+  expose a custom subset with `PERSONAPLEX_VOICES`.
+- **Persona**: a free-text role prompt (`PERSONAPLEX_PERSONA`) sent at the start
+  of each conversation; editable per-session in the UI.
 
-## NVIDIA endpoints
-
-The server defaults to NVIDIA's hosted NIM endpoints. To use locally-hosted
-Riva / TTS NIM containers instead, set in `.env.local`:
-
-```
-NVIDIA_ASR_URL=http://localhost:9000
-NVIDIA_TTS_URL=http://localhost:9001
-```
-
-See `apps/server/lib/nvidia.ts` for the exact endpoint shapes.
+See `packages/client/src/index.ts` for the exact protocol and the shipped voice
+list.

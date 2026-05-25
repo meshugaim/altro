@@ -1,127 +1,102 @@
-# Deploying speak
+# Deploying speak (PersonaPlex)
 
-The server is a Next.js app, so **Vercel (Option V) is the simplest host** — it
-deploys Next.js natively. Railway (Options A/B) also works if you prefer it.
+There are two pieces:
 
-Pick one. Don't do several.
+1. **PersonaPlex server** — the speech-to-speech model. **Needs a GPU.** This is
+   the part that does the real work and the only hard requirement.
+2. **speak server** (`apps/server`) — a tiny Next.js app that serves the web
+   client and a `/api/config` endpoint. Runs anywhere (Vercel/Railway/your box).
+
+The browser streams audio **directly** to the PersonaPlex server over a
+WebSocket; the speak server only tells the client where that GPU host is.
 
 ---
 
-## Option V — Vercel (Recommended for the Next.js server)
+## 1. PersonaPlex on a GPU host (required)
 
-**One-time setup (~2 min in the browser).**
+PersonaPlex is NVIDIA's Moshi-based full-duplex model. Run it on any GPU box
+(Brev / Lambda / RunPod / your own). Roughly:
 
-1. Go to https://vercel.com/new and log in with GitHub.
-2. **Import** the `aurelius-meshugaim/altro` repo. Authorize Vercel on it if asked.
-3. On the configure screen:
-   - **Root Directory**: click **Edit** → set to `speak/apps/server`
-   - **Branch**: switch to `claude/altro-speak-voice-app-QdWI6`
-     (until it's merged to `main`)
-   - Framework preset auto-detects **Next.js** (the `vercel.json` confirms it).
-4. **Environment Variables** → add `NVIDIA_API_KEY` = `nvapi-...`
-5. Click **Deploy**. You get a `https://<project>.vercel.app` URL automatically —
-   no separate "generate domain" step.
+```bash
+git clone https://github.com/NVIDIA/personaplex && cd personaplex
+export HF_TOKEN=<your-huggingface-token>     # needed to pull model weights
 
-Every push to the branch redeploys. Preview URLs are created per-branch.
+# Option A: docker compose (uses the provided Dockerfile / docker-compose.yaml)
+docker compose up            # serves on :8998
+
+# Option B: bare python
+pip install moshi/.
+SSL_DIR=$(mktemp -d); python -m moshi.server --ssl "$SSL_DIR"   # serves on :8998
+#   add --cpu-offload if VRAM is tight
+```
+
+This exposes a WebSocket at `…:8998/api/chat` and a web UI at `:8998`.
+
+**Make it reachable over `wss://` with a valid certificate.** Browsers only grant
+microphone access on secure origins, and a page served over HTTPS can only open
+`wss://` sockets (not `ws://`). Easiest path: put the GPU host behind a reverse
+proxy / tunnel that terminates TLS with a real cert (Caddy, nginx, Cloudflare
+Tunnel, ngrok, the cloud provider's HTTPS load balancer). The model server's own
+`--ssl` uses a self-signed cert, which browsers reject for WebSockets — fine for
+the bundled UI you click through, not for our client. Note the public URL, e.g.
+`wss://my-gpu-host.example.com`.
+
+Voices (`voices.tgz`) are pulled from HuggingFace automatically; override the
+directory with `--voice-prompt-dir`.
+
+---
+
+## 2. speak server (`apps/server`)
+
+Deploy the Next.js app to Vercel (recommended) or Railway. It's CPU-only.
+
+**Vercel:** https://vercel.com/new → import `aurelius-meshugaim/altro` → set
+**Root Directory** to `speak/apps/server` → **Deploy**.
+
+**Environment variables** (both hosts):
+
+| Variable | Example | Notes |
+|---|---|---|
+| `PERSONAPLEX_WS_URL` | `wss://my-gpu-host.example.com:8998` | Public WS base of the GPU server (required) |
+| `PERSONAPLEX_VOICE` | `NATF0.pt` | Default voice embedding |
+| `PERSONAPLEX_PERSONA` | `You are a wise and friendly teacher…` | Default role prompt |
+| `PERSONAPLEX_VOICES` | `NATF0.pt,NATM0.pt,VARF0.pt` | Optional: voices shown in the picker |
 
 **Smoke test:**
 
 ```bash
-curl https://<project>.vercel.app/
-curl -X POST https://<project>.vercel.app/api/chat \
-  -H "Content-Type: application/json" -d '{"text":"hello"}'
+curl https://<your-app>/api/config
+# → {"wsBase":"wss://my-gpu-host…","voices":[…],"defaultVoice":"NATF0.pt", …}
 ```
 
-> Note: Vercel serverless functions cap request bodies at ~4.5 MB and runtime at
-> 10 s (Hobby). Fine for short push-to-talk clips and chat. Long audio would need
-> Pro or a different ASR path.
+Then open the app, pick a voice/persona, and press **Start talking**.
 
 ---
 
-## Option A — GitHub Actions → Railway (Recommended)
-
-**One-time setup (~3 min on phone).**
-
-### 1. Create the Railway project
-
-- Go to https://railway.com/new → **Empty Project**.
-- Inside the project, click **+ Create** → **Empty Service**.
-- Rename the service to exactly **`speak`** (the workflow targets this name).
-
-### 2. Add the NVIDIA key as a Railway variable
-
-- Open the `speak` service → **Variables** tab → **+ New Variable**.
-- Name: `NVIDIA_API_KEY`
-- Value: `nvapi-...` (get one at https://build.nvidia.com → top-right → Get API Key)
-
-### 3. Add a Railway project token to GitHub
-
-- In Railway: project **Settings** → **Tokens** → **Create Token**.
-  - Name: `github-actions`. Copy the token.
-- In GitHub: https://github.com/aurelius-meshugaim/altro/settings/secrets/actions → **New repository secret**.
-  - Name: `RAILWAY_TOKEN`
-  - Value: paste the token.
-
-### 4. Generate the public URL
-
-- Railway → `speak` service → **Settings** → **Networking** → **Generate Domain**.
-- Note the URL (looks like `speak-production-xxxx.up.railway.app`).
-
-### 5. Trigger the first deploy
-
-- GitHub: **Actions** tab → **Deploy speak server** → **Run workflow** → pick the feature branch.
-- Or just push any change to `speak/apps/server/**` — it auto-triggers.
-
-After ~2 min the workflow turns green and the URL serves the speak status page.
-
-**Smoke test:**
+## Local development
 
 ```bash
-curl https://<your-url>/
-# → HTML showing "NVIDIA_API_KEY: configured"
-
-curl -X POST https://<your-url>/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"text":"hello"}'
-# → {"text":"Hi there! How can I help?"}
+cp apps/server/.env.example apps/server/.env.local   # set PERSONAPLEX_WS_URL
+npm run dev:server                                   # http://localhost:3001
 ```
 
----
-
-## Option B — Railway's built-in GitHub auto-deploy
-
-No workflow file needed. Railway watches the repo directly.
-
-1. https://railway.com/new → **Deploy from GitHub repo** → pick `aurelius-meshugaim/altro`.
-2. In the service **Settings**:
-   - **Source → Branch**: `claude/altro-speak-voice-app-QdWI6` (or `main` after merge)
-   - **Source → Root Directory**: `speak/apps/server`
-   - **Networking** → **Generate Domain**
-3. **Variables** tab → add `NVIDIA_API_KEY`.
-4. **Deployments** tab — it auto-runs on every push.
-
-If you go this route, delete `.github/workflows/deploy-server.yml` so you don't
-have two deploy paths fighting.
+`http://localhost` is treated as a secure origin by browsers, so mic access works
+locally. For the WebSocket you can use a `wss://` tunnel to your GPU host, or a
+`ws://` URL if you also serve the page over plain `http://localhost`.
 
 ---
 
-## After deploy: wire the clients
+## Clients
 
-Once the server URL exists, paste it back to me and I'll:
+- **Web** (`apps/server`): the working full-duplex client. Mic in, voice out,
+  real time.
+- **Mobile** (`apps/mobile`, Expo): currently hands off to the web client. Native
+  iOS full-duplex needs a dedicated Opus streaming module — next milestone.
+- **Desktop** (`apps/desktop`, Electron): wraps the web build.
 
-1. Update `apps/mobile/app.json` `extra.speakServerUrl` to point at it.
-2. Add `EXPO_PUBLIC_SPEAK_SERVER_URL` defaults so `expo export` bakes it in.
-3. Optional: deploy the Expo web build to GitHub Pages (a second workflow I'll
-   add when we know the server URL).
+## Notes
 
-## Voice loop (the GPU gap)
-
-Reminder: the `/api/chat` route works on Railway against NVIDIA's hosted LLM
-endpoint, but `/api/asr` and `/api/tts` need GPU-hosted NIM containers
-(Riva ASR + Magpie TTS) that Railway can't run. Three ways to close that:
-
-- Self-host NIM on Brev / Lambda / RunPod / your own GPU box, then set
-  `NVIDIA_ASR_URL` / `NVIDIA_TTS_URL` in Railway Variables.
-- Use NVIDIA's per-model hosted URLs from build.nvidia.com (copy them off the
-  "Deploy" tab on each model card).
-- Swap ASR/TTS to Deepgram + ElevenLabs (~30 min of code changes).
+- Full-duplex S2S is GPU-heavy and largely **one session per GPU** — plan
+  capacity and expect an always-on GPU cost.
+- The NVIDIA API key (`nvapi-…`) from the old ASR+LLM+TTS pipeline is **no longer
+  used**. PersonaPlex authenticates to HuggingFace for weights instead.
