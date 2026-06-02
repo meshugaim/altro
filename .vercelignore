@@ -1,0 +1,5 @@
+# Keep research + local verification artifacts out of the deployed site
+research/
+*.mjs
+smoke-*.png
+live-*.png
