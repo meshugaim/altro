@@ -10,3 +10,5 @@ v2-*.png
 config.js
 config.local.js
 .skybox-key
+node_modules/
+.git/
