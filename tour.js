@@ -84,6 +84,25 @@ const DESC = {
   ],
 };
 
+/* ---- the opening: the first rooms of each world are PRE-MADE (committed 4K webps).
+   They cost zero Skybox credits and load instantly. Live generation only begins once a
+   visitor walks PAST the opening ("build 360° in advance for the rest"). ---- */
+const STATIC = {
+  palazzo: [
+    { panorama:'img/seed-palazzo.webp', it:"L'Atrio",      en:"The Atrium",          arch:{ it:"L'Atrio", en:"Atrium", noMat:true }, mat:MATERIALS.palazzo[6], desc:DESC.palazzo[0] },
+    { panorama:'img/salone.webp',       it:"Il Salone",     en:"The Great Hall",      arch:ARCH.palazzo[1],                            mat:MATERIALS.palazzo[0], desc:DESC.palazzo[1] },
+    { panorama:'img/scalone.webp',      it:"Lo Scalone",    en:"The Grand Staircase", arch:{ it:"Lo Scalone", en:"Staircase" },        mat:MATERIALS.palazzo[2], desc:DESC.palazzo[2] },
+    { panorama:'img/biblioteca.webp',   it:"La Biblioteca", en:"The Library",         arch:ARCH.palazzo[8],                            mat:MATERIALS.palazzo[9], desc:DESC.palazzo[3] },
+  ],
+  fuori: [
+    { panorama:'img/seed-fuori.webp', it:"Il Cortile d'Onore", en:"The Court of Honour", arch:{ it:"Il Cortile", en:"Court", noMat:true }, mat:MATERIALS.fuori[3], desc:DESC.fuori[0] },
+    { panorama:'img/facade.webp',     it:"La Piazzetta",       en:"The Forecourt",       arch:ARCH.fuori[7],                               mat:MATERIALS.fuori[5], desc:DESC.fuori[1] },
+    { panorama:'img/terrazza.webp',   it:"La Terrazza",        en:"The Terrace",         arch:ARCH.fuori[4],                               mat:MATERIALS.fuori[8], desc:DESC.fuori[2] },
+    { panorama:'img/giardino.webp',   it:"Il Giardino",        en:"The Garden",          arch:ARCH.fuori[1],                               mat:MATERIALS.fuori[1], desc:DESC.fuori[3] },
+  ],
+};
+const staticRoom = (world, def) => ({ world, ready:true, isStatic:true, ...def });
+
 function makeRoom(world){
   const archs = ARCH[world], mats = MATERIALS[world];
   const a = coin(0.08) ? (archs.find(x => x.rare) || rand(archs)) : rand(archs.filter(x => !x.rare));
@@ -97,19 +116,17 @@ function makeRoom(world){
 
 /* ---- state ---- */
 const CTX = {
-  palazzo: { label:'Il Palazzo', rooms:[], cursor:0, seed:'img/seed-palazzo.webp', queue:[] },
-  fuori:   { label:'Fuori',      rooms:[], cursor:0, seed:'img/seed-fuori.webp', queue:[] },
+  palazzo: { label:'Il Palazzo', rooms:[], cursor:0, sIdx:1, seed:'img/seed-palazzo.webp', queue:[] },
+  fuori:   { label:'Fuori',      rooms:[], cursor:0, sIdx:1, seed:'img/seed-fuori.webp', queue:[] },
 };
 let ctx = 'palazzo', viewer = null, busy = false, hintShown = false, shownPano = null;
 
 function seedWorlds(){
-  const p = makeRoom('palazzo');
-  Object.assign(p, { it:"L'Atrio", en:"The Atrium", arch:{ it:"L'Atrio", en:"Atrium", noMat:true }, panorama: CTX.palazzo.seed });
-  CTX.palazzo.rooms = [p];
-  const f = makeRoom('fuori');
-  Object.assign(f, { it:"Il Cortile d'Onore", en:"The Court of Honour", arch:{ it:"Il Cortile", en:"Court", noMat:true }, panorama: CTX.fuori.seed });
-  CTX.fuori.rooms = [f];
+  CTX.palazzo.rooms = [ staticRoom('palazzo', STATIC.palazzo[0]) ]; CTX.palazzo.sIdx = 1;
+  CTX.fuori.rooms   = [ staticRoom('fuori',   STATIC.fuori[0]) ];   CTX.fuori.sIdx = 1;
 }
+/* Warm the browser cache for a world's pre-made rooms so their crossfades are instant. */
+function preloadStatics(world){ STATIC[world].forEach(d => preloadPano(d.panorama)); }
 
 /* ---- viewer ---- */
 function initViewer(){
@@ -231,17 +248,26 @@ async function topUp(world){
   }
 }
 
-/* Walk on: take the next buffered room — instant if its 360 is already loaded, else the beat. */
+/* Walk on. Two regimes:
+   1) the PRE-MADE opening — serve the next committed room: instant, no credits, no beat.
+   2) past the opening — take the next buffered LIVE room: instant if its 360 is already
+      loaded, else show the conjuring beat while it finishes. */
 async function walkOn(){
   if (busy) return;
   busy = true; hideHint();
-  const C = CTX[ctx];
-  if (C.queue.length === 0) topUp(ctx);
-  // prefer any room whose 360 is already loaded → instant; else take the head and show the beat
-  let qi = C.queue.findIndex(r => r.ready);
-  if (qi < 0) qi = 0;
-  const room = C.queue.splice(qi, 1)[0];
+  const C = CTX[ctx], statics = STATIC[ctx];
   try {
+    if (C.sIdx < statics.length){              // --- opening: pre-made, instant, free ---
+      const room = staticRoom(ctx, statics[C.sIdx]); C.sIdx++;
+      C.rooms = C.rooms.slice(0, C.cursor + 1); C.rooms.push(room); C.cursor = C.rooms.length - 1;
+      paintChrome();
+      await show(room);
+      return;
+    }
+    // --- the rest: live generation, buffered ahead ---
+    if (C.queue.length === 0) topUp(ctx);
+    let qi = C.queue.findIndex(r => r.ready); if (qi < 0) qi = 0;
+    const room = C.queue.splice(qi, 1)[0];
     if (!room || !room.promise) throw new Error('no preparation');
     if (!room.ready){                          // image not in yet → designed wait, with its real name
       startChoreo(room);
@@ -258,7 +284,10 @@ async function walkOn(){
     notice('<b>Could not conjure the next room.</b> ' + (e.message || ''));
   } finally {
     busy = false;
-    topUp(ctx);                                // refill the buffer so the next walk-ons stay instant
+    // start (or keep) the live buffer warming once we're within one room of the opening's end,
+    // so the first generated room is ready by the time the visitor needs it. No credits are spent
+    // until a visitor actually reaches this point.
+    if (C.sIdx >= statics.length - 1) topUp(ctx);
   }
 }
 async function pollStatus(id){
@@ -284,7 +313,8 @@ async function switchCtx(next){
   ctx = next; root.setAttribute('data-world', ctx);
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.ctx === ctx));
   await show(CTX[ctx].rooms[CTX[ctx].cursor]); paintChrome();
-  topUp(ctx);                                  // fill this world's buffer too
+  preloadStatics(ctx);                         // warm this world's pre-made opening
+  if (CTX[ctx].sIdx >= STATIC[ctx].length - 1) topUp(ctx);   // only generate live once near/past the opening
 }
 function setStyle(st){
   // a style change discards rooms buffered in the old look; the buffer rebuilds in the new style
@@ -322,19 +352,19 @@ function hideHint(){ el('hint').classList.add('hidden'); }
 function notice(html){ let n = el('notice'); if (!n){ n = document.createElement('div'); n.id = 'notice'; document.body.appendChild(n); } n.innerHTML = html; n.classList.add('show'); setTimeout(() => n.classList.remove('show'), 6000); }
 
 /* ---- boot ---- */
-async function enter(){ el('intro').classList.add('hidden'); showChrome(true); await show(CTX[ctx].rooms[CTX[ctx].cursor]); paintChrome(); topUp(ctx); }
+async function enter(){ el('intro').classList.add('hidden'); showChrome(true); await show(CTX[ctx].rooms[CTX[ctx].cursor]); paintChrome(); preloadStatics(ctx); }
 function start(){
   seedWorlds();
   initViewer();
   root.setAttribute('data-world', ctx);
   setStyle((()=>{ try { return localStorage.getItem('palazzo-style'); } catch(e){ return null; } })() || 'maximal');
-  topUp('palazzo');                            // start filling the buffer while the intro is read
+  preloadStatics('palazzo'); preloadStatics('fuori');   // warm the free pre-made openings; no credits spent
   el('enter').addEventListener('click', enter);
   el('home').addEventListener('click', () => { el('intro').classList.remove('hidden'); showChrome(false); });
   el('restart').addEventListener('click', () => { el('closing').classList.add('hidden'); el('intro').classList.remove('hidden'); showChrome(false); });
   el('endTour').addEventListener('click', () => { showChrome(false); el('closing').classList.remove('hidden'); });
   document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchCtx(t.dataset.ctx)));
-  document.querySelectorAll('.sbtn').forEach(b => b.addEventListener('click', () => { setStyle(b.dataset.style); topUp(ctx); }));
+  document.querySelectorAll('.sbtn').forEach(b => b.addEventListener('click', () => { setStyle(b.dataset.style); if (CTX[ctx].sIdx >= STATIC[ctx].length) topUp(ctx); }));
   document.addEventListener('keydown', e => {
     if (el('topbar').classList.contains('hidden')) return;
     if (e.key === 'ArrowLeft') back();
