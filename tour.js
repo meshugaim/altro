@@ -205,17 +205,29 @@ function genRoom(world, room){
     .then(panoUrl => { room.panorama = panoUrl; return room; });   // ready only after the image is downloaded+decoded
 }
 
-/* Keep a BUFFER of rooms pre-building per world, so several walk-ons in a row are instant.
-   Each queued room has its name/material decided up front and its 360 image generating +
-   preloading in the background. The buffer is refilled continuously. */
+/* Keep a small BUFFER of rooms loaded AHEAD per world so the next few walk-ons are instant.
+   Generation runs ONE room at a time (sequential single-flight) — the Essential plan gives no
+   concurrency guarantee, so we never fire parallel Skybox jobs. Each queued room has its
+   name/material decided up front; its 360 image is generated + preloaded, then it's marked ready.
+   walkOn awaits a room's `promise` if it's still cooking. The loop refills as rooms are consumed. */
 const BUFFER = 4;                              // rooms loaded ahead per world (each ≈ 1 Skybox credit)
-function topUp(world){
-  const C = CTX[world];
-  while (C.queue.length < BUFFER){
-    const room = makeRoom(world);
-    room.ready = false;
-    room.promise = genRoom(world, room).then(() => { room.ready = true; }).catch(() => { room._failed = true; });
-    C.queue.push(room);                        // concurrent: all in-flight rooms generate in parallel
+const filling = { palazzo: false, fuori: false };
+async function topUp(world){
+  if (filling[world]) return;                  // one expansion at a time — never run two fills at once
+  filling[world] = true;
+  try {
+    const C = CTX[world];
+    while (C.queue.length < BUFFER){
+      const room = makeRoom(world);
+      room.ready = false;
+      let resolve; room.promise = new Promise(r => { resolve = r; });
+      C.queue.push(room);                      // queued (named) immediately; generates below, in turn
+      try { await genRoom(world, room); room.ready = true; }
+      catch (e) { room._failed = true; }
+      resolve(room);                           // wake any walkOn awaiting this exact room
+    }
+  } finally {
+    filling[world] = false;
   }
 }
 
