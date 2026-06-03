@@ -17,3 +17,7 @@ v2-*.png
 verify-v2.mjs
 v4-*.png
 verify-v4.mjs
+
+# static-opening verify (local only)
+verify-static.mjs
+static-*.png
