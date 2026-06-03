@@ -21,3 +21,7 @@ verify-v4.mjs
 # static-opening verify (local only)
 verify-static.mjs
 static-*.png
+
+# local env (holds SKYBOX_KEY) — never commit
+.env
+.env.*
