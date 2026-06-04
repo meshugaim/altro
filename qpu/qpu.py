@@ -164,6 +164,7 @@ STATE = {
     "temps": [], "labels": [], "hottest": 0.0,
     "sound": 0.0, "mic": MIC_ON, "cam": CAM_ON,
     "absorbed": 0, "samples": 0, "rate_bps": 0.0, "fire": 0.0, "smoke": 0.0,
+    "lava": 0.0,   # LavaRand-style optical chaos (lava-lamp sim / webcam), fed by the client
 }
 _zone_labels = []
 for p in THERMAL:
@@ -245,6 +246,77 @@ def measure(n=32):
 
 
 # ----------------------------------------------------------------------------
+# D-Wave-style quantum annealer — read randomness from a frozen Ising ground state
+# ----------------------------------------------------------------------------
+def anneal_measure(n=32, L=8, steps=140):
+    """Build a random Ising spin-glass from the entropy pool, then simulate annealing
+    from hot to cold (a D-Wave-style schedule). Every coupling, the initial spins, and
+    every Metropolis coin-flip is drawn from the physical pool, so the descent into the
+    ground state is grounded in real-world noise. Read the frozen spins as random bits,
+    mix them back, and return the energy trace + final lattice for the visualization."""
+    import math
+    sz = L * L
+    rb = POOL.squeeze(sz * 5 + steps * sz * 2 + 64)   # plenty of pool bytes for the run
+    pos = [0]
+    def nb():
+        v = rb[pos[0] % len(rb)]; pos[0] += 1; return v
+    def nf():
+        return nb() / 255.0
+    spins = [1 if nb() & 1 else -1 for _ in range(sz)]
+    Jx = [nf() * 2 - 1 for _ in range(sz)]            # coupling to right neighbour
+    Jy = [nf() * 2 - 1 for _ in range(sz)]            # coupling to lower neighbour
+    h = [(nf() * 2 - 1) * 0.5 for _ in range(sz)]     # local field
+    def localfield(i):
+        x, y = i % L, i // L
+        f = h[i]
+        if x > 0:     f += Jx[i - 1] * spins[i - 1]
+        if x < L - 1: f += Jx[i] * spins[i + 1]
+        if y > 0:     f += Jy[i - L] * spins[i - L]
+        if y < L - 1: f += Jy[i] * spins[i + L]
+        return f
+    def energy():
+        e = 0.0
+        for i in range(sz):
+            x, y = i % L, i // L
+            if x < L - 1: e -= Jx[i] * spins[i] * spins[i + 1]
+            if y < L - 1: e -= Jy[i] * spins[i] * spins[i + L]
+            e -= h[i] * spins[i]
+        return e
+    t_hi, t_lo = 3.0, 0.02
+    etrace, frames = [], []
+    keep = max(1, steps // 36)                        # snapshot ~36 lattice frames for the UI
+    for s in range(steps):
+        frac = s / (steps - 1)
+        T = t_hi * (t_lo / t_hi) ** frac              # geometric cooling
+        for _ in range(sz):                           # one sweep per step
+            i = nb() % sz
+            dE = 2 * spins[i] * localfield(i)
+            if dE <= 0 or nf() < math.exp(-dE / max(T, 1e-6)):
+                spins[i] = -spins[i]
+        etrace.append(round(energy(), 3))
+        if s % keep == 0:
+            frames.append(spins[:])                   # copy lattice snapshot
+    frames.append(spins[:])
+    bits = bytearray()
+    for k in range(0, sz, 8):
+        byte = 0
+        for j in range(8):
+            if k + j < sz and spins[k + j] > 0:
+                byte |= (1 << j)
+        bits.append(byte)
+    POOL.absorb(b"anneal", bytes(bits))
+    raw = POOL.squeeze(max(n, 8))
+    u = int.from_bytes(raw[:8], "big")
+    return {
+        "hex": raw[:n].hex(), "int": u % 100, "dice": (raw[0] % 6) + 1,
+        "coin": "H" if raw[1] & 1 else "T", "qubit": "|1⟩" if raw[2] & 1 else "|0⟩",
+        "bits": n * 8, "L": L, "spins": spins, "frames": frames,
+        "energy": etrace, "e0": etrace[0], "e1": etrace[-1],
+        "drop": round(etrace[0] - etrace[-1], 2),
+    }
+
+
+# ----------------------------------------------------------------------------
 # web UI
 # ----------------------------------------------------------------------------
 HTML = """<!doctype html><html lang=en><head><meta charset=utf-8>
@@ -262,7 +334,7 @@ h1 span{color:var(--ac)}
 .wrap{width:100%;max-width:520px;display:flex;flex-direction:column;gap:14px}
 canvas{width:100%;height:248px;border-radius:14px;background:#000;display:block;
 box-shadow:0 0 40px #ff5a3622,inset 0 0 0 1px #ffffff10}
-.chs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.chs{display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:8px}
 .ch{background:var(--card);border-radius:12px;padding:10px;border:1px solid #ffffff0d}
 .ch.smoke{border-color:#9aa3b855;box-shadow:0 0 18px #9aa3b81f}
 .ch .k{font-size:9.5px;color:var(--mut);letter-spacing:.5px;text-transform:uppercase}
@@ -301,11 +373,29 @@ border:1px solid #ffffff12;border-radius:12px;cursor:pointer;font-family:inherit
 font-size:14px;font-weight:700;padding:14px;cursor:pointer;font-family:inherit;transition:.1s}
 .mic:active{transform:scale(.98)}
 .mic.on{background:#0e2a18;color:#7df9b0;border-color:#3ad07a;box-shadow:0 0 16px #3ad07a55}
+.modes{display:flex;gap:8px}
+.mode{flex:1;background:var(--card);color:var(--mut);border:1px solid #ffffff12;border-radius:12px;
+font-size:13px;font-weight:700;padding:11px;cursor:pointer;font-family:inherit;transition:.1s}
+.mode.on{color:var(--txt);border-color:var(--ac);box-shadow:0 0 14px #25c2f433}
+.anneal{background:var(--card);border:1px solid #ffffff0d;border-radius:14px;padding:13px}
+.alabel{font-size:10px;color:var(--mut);letter-spacing:1px;text-transform:uppercase;margin-bottom:9px}
+.alabel b{color:#b388ff}
+.arow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#latt,#ecurve{width:100%;height:128px;border-radius:10px;background:#04060b;box-shadow:inset 0 0 0 1px #ffffff0d;display:block}
+.acap{font-size:9px;color:var(--mut);text-align:center;margin-top:4px;letter-spacing:.5px}
+.ameta{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:9px}
+.ameta b{color:var(--txt)}
+.ch.lava .bar i{background:linear-gradient(90deg,#ff7a18,#ffd54a)}
 </style></head><body>
 <h1>ENTROPY <span>QPU</span></h1>
 <div class=sub>זר לא יבין · physical-chaos random core</div>
 <div class=wrap>
+ <div class=modes>
+   <button class="mode on" id=m_fire onclick="setMode('fire')">🔥 Fire &amp; Smoke</button>
+   <button class=mode id=m_lava onclick="setMode('lava')">🫧 Lava · LavaRand</button>
+ </div>
  <canvas id=fire></canvas>
+ <canvas id=lava style="display:none"></canvas>
  <button id=miclisten class=mic onclick="enableMic()">🎙 Click to let the fire hear the room</button>
  <div class=elements>
    <button class=el id=el_wood onclick="elwood()">🪵 Wood</button>
@@ -318,9 +408,10 @@ font-size:14px;font-weight:700;padding:14px;cursor:pointer;font-family:inherit;t
    <div class="ch snd"><div class=k>🎙 Sound</div><div class=v id=sv>—</div><div class=bar><i id=sb></i></div></div>
    <div class="ch fire"><div class=k>🔥 Fire</div><div class=v id=fv>—</div><div class=bar><i id=fb></i></div></div>
    <div class="ch smoke"><div class=k>🌫 Smoke <b>★</b></div><div class=v id=kv>—</div><div class=bar><i id=kb></i></div></div>
+   <div class="ch lava"><div class=k>🫧 Lava</div><div class=v id=lv>—</div><div class=bar><i id=lb></i></div></div>
  </div>
  <div class=pool><span>pool absorbed <b id=ab>0</b> bytes · <b id=rt>0</b> B/s</span><span id=hs>● live</span></div>
- <button onclick=measure()>⚛ MEASURE · collapse the field</button>
+ <button onclick=measure()>⚛ ANNEAL · collapse to a ground state</button>
  <div class=out>
    <div class=hex id=hex>press measure to draw randomness from the room…</div>
    <div class=grid>
@@ -330,7 +421,15 @@ font-size:14px;font-weight:700;padding:14px;cursor:pointer;font-family:inherit;t
      <div><div class=k>qubit</div><div class=b id=oq>·</div></div>
    </div>
  </div>
- <div class=foot>temp = sensor jitter · sound = mic low-bits (not stored) · fire = room loudness · 🌫 smoke ★ = sound × thermal-jitter turbulence — the better entropy</div>
+ <div class=anneal>
+   <div class=alabel>⚛ <b>quantum annealer</b> · Ising spin-glass · D-Wave-style schedule</div>
+   <div class=arow>
+     <div><canvas id=latt></canvas><div class=acap>spin lattice (8×8) freezing</div></div>
+     <div><canvas id=ecurve></canvas><div class=acap>energy → ground state</div></div>
+   </div>
+   <div class=ameta><span id=asched>idle — press Anneal</span><span id=aenergy>E —</span></div>
+ </div>
+ <div class=foot>temp = sensor jitter · sound = mic low-bits (not stored) · fire = room loudness · 🌫 smoke ★ = the better entropy · 🫧 lava = LavaRand optical chaos (photographs the lamp into the pool) · ⚛ anneal = randomness read from a frozen Ising ground state</div>
 </div>
 <script>
 const $=i=>document.getElementById(i);
@@ -432,18 +531,79 @@ async function poll(){try{const d=await(await fetch('/api/state')).json();
  if(!micOn){$('sv').textContent=d.mic?(d.sound).toFixed(2):'off';if(!d.mic)$('sv').parentElement.classList.add('off');lerpw('sb',d.sound);}
  $('fv').textContent=(d.fire).toFixed(2);lerpw('fb',d.fire);
  $('kv').textContent=(d.smoke).toFixed(2);lerpw('kb',d.smoke);
+ $('lv').textContent=(d.lava).toFixed(2);lerpw('lb',d.lava);
  envT=Math.min(1.2,d.fire*1.0+d.smoke*0.25);   // room loudness feeds the fire base
  $('ab').textContent=d.absorbed.toLocaleString();$('rt').textContent=d.rate_bps;$('hs').textContent='● live';
 }catch(e){$('hs').textContent='● server offline';}}
 poll();setInterval(poll,500);
-// ---- measure ----
-async function measure(){$('hex').textContent='collapsing…';
- try{const d=await(await fetch('/api/random?n=32')).json();
+// ===================== LavaRand lava lamp =====================
+// A metaball lava lamp (warm blobs that rise when heated at the base, sink when cool at the
+// top). Every ~90 frames we "photograph" the lamp, hash the pixels, and feed that optical
+// chaos into the entropy pool — exactly how Cloudflare's wall of lava lamps seeds randomness.
+let mode='fire';
+const lcv=$('lava'),lcx=lcv.getContext('2d');
+const LN=92,LM=126;lcv.width=LN;lcv.height=LM;
+const limg=lcx.createImageData(LN,LM);
+const blobs=[];for(let k=0;k<8;k++)blobs.push({x:12+Math.random()*(LN-24),y:Math.random()*LM,r:7+Math.random()*7,vy:0,t:Math.random()});
+let lavaTick=0;
+function perturbV(src,v){fetch('/api/perturb?src='+src+'&v='+v.toFixed(3)).catch(()=>{});}
+function lavaStep(){
+ for(const bl of blobs){
+   if(bl.y>LM-22)bl.t=Math.min(1,bl.t+0.02); if(bl.y<22)bl.t=Math.max(0,bl.t-0.02);
+   bl.vy+=(0.5-bl.t)*0.05; bl.vy*=0.92; bl.y+=bl.vy; bl.x+=Math.sin((lavaTick+bl.r)*0.02)*0.3;
+   if(bl.y<bl.r){bl.y=bl.r;bl.vy*=-0.4;} if(bl.y>LM-bl.r){bl.y=LM-bl.r;bl.vy*=-0.4;}
+   if(bl.x<bl.r)bl.x=bl.r; if(bl.x>LN-bl.r)bl.x=LN-bl.r;
+ }
+ lavaTick++;
+ const D=limg.data;
+ for(let y=0;y<LM;y++)for(let x=0;x<LN;x++){
+   let f=0;for(const bl of blobs){const dx=x-bl.x,dy=y-bl.y;f+=(bl.r*bl.r)/(dx*dx+dy*dy+1);}
+   const i=(y*LN+x)*4;let r,g,b;
+   if(f>1.0){const t=Math.min(1,(f-1)*1.1);r=20+t*235;g=10+t*120;b=24+t*40;if(t>0.85){b+=40;}}
+   else{const gl=Math.min(1,f);r=10+gl*28;g=6+gl*8;b=16+gl*40;}
+   D[i]=r>255?255:r;D[i+1]=g>255?255:g;D[i+2]=b>255?255:b;D[i+3]=255;
+ }
+ lcx.putImageData(limg,0,0);
+ if((lavaTick%90)===0){let prev=0,turb=0;for(let k=0;k<D.length;k+=64){turb+=Math.abs(D[k]-prev);prev=D[k];}
+   perturbV('lava',Math.min(1,turb/(D.length/64*110)));}
+ if(mode==='lava')requestAnimationFrame(lavaStep);
+}
+function setMode(m){mode=m;
+ $('fire').style.display=m==='fire'?'block':'none';
+ $('lava').style.display=m==='lava'?'block':'none';
+ $('miclisten').style.display=m==='fire'?'':'none';
+ $('m_fire').classList.toggle('on',m==='fire');$('m_lava').classList.toggle('on',m==='lava');
+ if(m==='lava')lavaStep();
+}
+// ===================== quantum annealer (measure) =====================
+const latt=$('latt'),lctx=latt.getContext('2d'),ec=$('ecurve'),ectx=ec.getContext('2d');
+function drawLattice(spins,Ln){const W=latt.width=latt.clientWidth,H=latt.height=latt.clientHeight;
+ const cell=Math.min(W,H)/Ln,ox=(W-cell*Ln)/2,oy=(H-cell*Ln)/2;lctx.clearRect(0,0,W,H);
+ for(let i=0;i<spins.length;i++){const x=i%Ln,y=(i/Ln|0);
+   lctx.fillStyle=spins[i]>0?'#25c2f4':'#0c1424';lctx.fillRect(ox+x*cell+1,oy+y*cell+1,cell-2,cell-2);}}
+function drawEnergy(energy,upto){const W=ec.width=ec.clientWidth,H=ec.height=ec.clientHeight;
+ ectx.clearRect(0,0,W,H);let mn=Infinity,mx=-Infinity;for(const e of energy){if(e<mn)mn=e;if(e>mx)mx=e;}
+ ectx.strokeStyle='#b388ff';ectx.lineWidth=2;ectx.beginPath();
+ const nshow=upto||energy.length;
+ for(let k=0;k<nshow;k++){const x=k/(energy.length-1)*W,yy=H-(energy[k]-mn)/(mx-mn+1e-6)*(H-10)-5;
+   if(k===0)ectx.moveTo(x,yy);else ectx.lineTo(x,yy);}
+ ectx.stroke();}
+async function measure(){$('hex').textContent='annealing…';$('asched').textContent='melting…';
+ try{const d=await(await fetch('/api/anneal?n=32')).json();
+  const frames=d.frames,Ln=d.L,energy=d.energy,total=frames.length;let fi=0;
+  await new Promise(res=>{const tick=()=>{
+    drawLattice(frames[Math.min(fi,total-1)],Ln);
+    drawEnergy(energy,Math.round((fi+1)/total*energy.length));
+    const frac=fi/(total-1),T=(3*Math.pow(0.02/3,frac)).toFixed(2);
+    $('asched').innerHTML='annealing · T = <b>'+T+'</b>';
+    fi++; if(fi<total)setTimeout(tick,40); else res();};tick();});
+  drawLattice(d.spins,Ln);drawEnergy(energy);
+  $('asched').innerHTML='ground state ✓';
+  $('aenergy').innerHTML='E '+d.e0+' → <b>'+d.e1+'</b> (Δ'+d.drop+')';
   $('hex').textContent=d.hex;$('oint').textContent=d.int;$('odice').textContent=d.dice;
   $('ocoin').textContent=d.coin;$('oq').textContent=d.qubit;
-  for(const id of['oint','odice','ocoin','oq']){const e=$(id);e.style.color='#25c2f4';
-   setTimeout(()=>e.style.color='',400);}
- }catch(e){$('hex').textContent='✕ '+e.message;}}
+  for(const id of['oint','odice','ocoin','oq']){const e=$(id);e.style.color='#25c2f4';setTimeout(()=>e.style.color='',400);}
+ }catch(e){$('hex').textContent='✕ '+e.message;$('asched').textContent='—';}}
 </script></body></html>"""
 
 
@@ -469,11 +629,20 @@ class H(BaseHTTPRequestHandler):
             q = parse_qs(urlparse(self.path).query)
             n = max(1, min(1024, int((q.get("n") or ["32"])[0])))
             self._send(200, json.dumps(measure(n)))
+        elif path == "/api/anneal":
+            q = parse_qs(urlparse(self.path).query)
+            n = max(1, min(1024, int((q.get("n") or ["32"])[0])))
+            self._send(200, json.dumps(anneal_measure(n)))
         elif path == "/api/perturb":
             q = parse_qs(urlparse(self.path).query)
             src = (q.get("src") or ["?"])[0][:16]
-            # the elements feed the pool: their press timing + fresh OS noise
+            # the elements (and the lava lamp) feed the pool: timing + fresh OS noise
             POOL.absorb(b"elem:" + src.encode("ascii", "replace"), os.urandom(16))
+            if src == "lava":
+                try:
+                    STATE["lava"] = max(0.0, min(1.0, float((q.get("v") or ["0"])[0])))
+                except Exception:
+                    pass
             self._send(200, json.dumps({"ok": True, "src": src}))
         else:
             self._send(404, b"not found")
