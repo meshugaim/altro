@@ -3,16 +3,17 @@
 A small, zero-dependency agent for managing a **live** PayPal account: accept
 payments, refunds, transaction/balance reads, and payouts.
 
-Secrets never live in this repo. They're stored in **Doppler** (`oria` project,
-`prd` config) as `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`, and injected at
-runtime with `doppler run`.
+Secrets never live in this repo. They're stored in **Doppler** (`finance`
+project, `dev` config) as `PAYPAL_CLIENT` / `PAYPAL_SECRET`, and injected at
+runtime with `doppler run`. (The agent also accepts the `PAYPAL_CLIENT_ID` /
+`PAYPAL_CLIENT_SECRET` naming.)
 
 ## Run
 
 ```bash
 cd paypal
 # every command goes through doppler so creds are injected, never on disk:
-doppler run --project oria --config prd -- node bin/pp.mjs whoami
+doppler run --project finance --config dev -- node bin/pp.mjs whoami
 ```
 
 `whoami` shows which capabilities the PayPal app actually has enabled.

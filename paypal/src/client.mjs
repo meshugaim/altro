@@ -16,12 +16,13 @@ export function baseUrl() {
 }
 
 function creds() {
-  const id = process.env.PAYPAL_CLIENT_ID;
-  const secret = process.env.PAYPAL_CLIENT_SECRET;
+  // Accept either naming style: PAYPAL_CLIENT_ID/_SECRET or PAYPAL_CLIENT/PAYPAL_SECRET.
+  const id = process.env.PAYPAL_CLIENT_ID || process.env.PAYPAL_CLIENT;
+  const secret = process.env.PAYPAL_CLIENT_SECRET || process.env.PAYPAL_SECRET;
   if (!id || !secret) {
     throw new Error(
-      "Missing PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET. Run via:\n" +
-        "  doppler run --project oria --config prd -- node bin/pp.mjs ..."
+      "Missing PayPal credentials. Expected PAYPAL_CLIENT(_ID) and PAYPAL_SECRET(_CLIENT_SECRET).\n" +
+        "Run via:  doppler run --project finance --config dev -- node bin/pp.mjs ..."
     );
   }
   return { id, secret };
