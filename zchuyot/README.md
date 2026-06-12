@@ -40,7 +40,10 @@ The person is the database. The conversation is the form.
 | [06-data-sources.md](06-data-sources.md) | Kol Zchut, gov.il, BTL simulators, mybenefits |
 | [07-risks.md](07-risks.md) | Legal-advice line, privacy, hallucination, trust |
 | [08-open-questions.md](08-open-questions.md) | Decisions pending |
+| [09-live-integrations.md](09-live-integrations.md) | Live integrations: what to apply to, per tier |
+| [applications/](applications/00-runbook.md) | Application pack: runbook, entity decision, Kol Zchut letter |
 
 ## Status
 
 - 2026-06-12 — project created, first planning pass (web-grounded landscape).
+- 2026-06-12 — Oria: we want LIVE integrations → 09 maps every application path; incorporation of the entity becomes the blocking first step.

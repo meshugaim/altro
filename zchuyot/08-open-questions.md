@@ -11,9 +11,10 @@
    money, the other is the thesis-showcase (rights hiding in a story).
    Tax refunds = crowded; miluim = timely but rules are in flux.
 3. **Nonprofit vs for-profit vs hybrid (07-4)?**
-   Lean: defer until MVP-0 proves the loop, but write the hard line now:
-   never % of a kitzba. This decision gates any conversation with Kol Zchut
-   or philanthropy.
+   ~~Lean: defer until MVP-0~~ **PROMOTED TO BLOCKING (2026-06-12):** the
+   live-integrations decision (09) means every application needs a registered
+   entity first. Full memo + lean: `applications/entity-decision.md`.
+   Hard line stands: never % of a kitzba.
 4. **Kol Zchut: partner-first or build-rulebase-independently?**
    Lean: hand-compile MVP-0's ~40 rules from primary sources (BTL/מס הכנסה)
    citing Kol Zchut as reference — no scraping question arises at that scale —
