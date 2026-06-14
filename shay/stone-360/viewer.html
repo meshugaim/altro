@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stone 360 POC — prompt your room, orbit the stone</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d0d0f;overflow:hidden;font-family:system-ui,sans-serif}
+  #c{display:block;width:100vw;height:100vh}
+  .panel{position:fixed;color:#fff;background:rgba(16,16,20,.62);backdrop-filter:blur(8px);
+         border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px 14px}
+  #prompt-panel{left:16px;top:16px;width:330px}
+  #prompt-panel h1{font-size:14px;margin:0 0 8px;font-weight:600;letter-spacing:.2px}
+  #prompt-panel .sub{font-size:11px;color:#9aa;margin:-4px 0 10px}
+  textarea{width:100%;box-sizing:border-box;height:60px;resize:vertical;border-radius:8px;
+           border:1px solid #333;background:#0c0c0e;color:#eee;font:13px system-ui;padding:8px}
+  .row{display:flex;gap:8px;margin-top:8px;align-items:center}
+  button{flex:0 0 auto;background:#ffd479;color:#1a1a1a;border:0;border-radius:8px;
+         padding:8px 14px;font-weight:600;cursor:pointer;font-size:13px}
+  button:disabled{opacity:.5;cursor:wait}
+  #status{font-size:12px;color:#9fd;min-height:16px}
+  .lbl{font-size:11px;color:#9aa;margin:11px 0 5px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-size:11px;color:#cfd;background:#23232a;border:1px solid #333;border-radius:14px;
+        padding:3px 9px;cursor:pointer}
+  .chip:hover{background:#2e2e38}
+  .chip.on{background:#ffd479;color:#1a1a1a;border-color:#ffd479}
+  #hud{right:16px;bottom:16px;font-size:12px;color:#cdd;text-align:right;line-height:1.5}
+  #hud b{color:#ffd479}
+  #err{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:#ff9a9a;font-size:14px;text-align:center;display:none}
+  .spin{display:inline-block;width:11px;height:11px;border:2px solid #9fd;border-top-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-1px;margin-right:5px}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="prompt-panel" class="panel">
+  <h1>Build your room</h1>
+  <div class="sub">type a room → flux-360 wraps a 360° panorama around the stone</div>
+  <textarea id="prompt" placeholder="a warm Scandinavian living room, oak floor, big windows, plants...">a warm Scandinavian living room with light oak floor, large windows, linen sofa, potted plants, soft afternoon light</textarea>
+  <div class="row">
+    <button id="go">Generate room</button>
+    <span id="status">ready</span>
+  </div>
+  <div class="lbl">presets</div>
+  <div class="chips" id="presets"></div>
+  <div class="lbl">stone</div>
+  <div class="chips" id="stones"></div>
+</div>
+
+<div id="hud" class="panel">
+  <b id="stone-name">Striped Sentinel</b> · <span id="stone-dim"></span><br>
+  drag to orbit · scroll to zoom
+</div>
+<div id="err"></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three.module.js",
+  "three/addons/": "./vendor/addons/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+// stone catalog (dims in cm, from the shaym.beauty manifest)
+const STONES = {
+  boulder: { name: 'Striped Sentinel', glb: 'out/stone-boulder.glb', w: 85, h: 62, d: 55 },
+  flint:   { name: 'Banded Flint',     glb: 'out/stone-flint.glb',   w: 14, h: 9,  d: 7  },
+};
+let current = 'boulder';
+
+const Q = new URLSearchParams(location.search);
+const AZ = Q.has('az') ? +Q.get('az') * Math.PI/180 : null;
+if (Q.has('stone')) current = Q.get('stone');
+if (Q.has('bare')) { document.getElementById('prompt-panel').style.display='none'; document.getElementById('hud').style.display='none'; }
+
+const errEl = document.getElementById('err');
+const fail = (m) => { errEl.style.display='block'; errEl.innerHTML = m; console.error(m); };
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.01, 100);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 0.35; controls.maxDistance = 7;
+controls.maxPolarAngle = Math.PI * 0.52;
+controls.autoRotate = (AZ === null);
+controls.autoRotateSpeed = 0.6;
+
+// pause auto-rotate while the user drives, resume after idle
+let idleT;
+controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(idleT); });
+controls.addEventListener('end', () => { if (AZ === null) idleT = setTimeout(() => controls.autoRotate = true, 3500); });
+
+// ---- lights + shadow ----
+scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 0.5));
+const key = new THREE.DirectionalLight(0xffffff, 1.4);
+key.position.set(2.5, 4.5, 2.0); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left:-2, right:2, top:2, bottom:-2, near:0.1, far:14 });
+key.shadow.bias = -0.0004; scene.add(key);
+
+// ---- floor shadow-catcher ----
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(12, 12).rotateX(-Math.PI/2),
+  new THREE.ShadowMaterial({ opacity: 0.32 })
+);
+floor.receiveShadow = true; scene.add(floor);
+
+// ---- 360 room (swappable) ----
+let skyMat = null;
+const pmrem = new THREE.PMREMGenerator(renderer);
+function loadRoom(url) {
+  new THREE.TextureLoader().load(url, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    if (!skyMat) {
+      skyMat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide });
+      scene.add(new THREE.Mesh(new THREE.SphereGeometry(20, 64, 32), skyMat));
+    } else { skyMat.map?.dispose(); skyMat.map = tex; skyMat.needsUpdate = true; }
+    scene.environment = pmrem.fromEquirectangular(tex).texture;
+  }, undefined, () => fail('Could not load room — generate one first.'));
+}
+
+// ---- stone + adaptive plinth ----
+const loader = new GLTFLoader();
+let stoneGroup = null, ped = null;
+function loadStone(id) {
+  const s = STONES[id]; if (!s) return;
+  current = id;
+  document.getElementById('stone-name').textContent = s.name;
+  document.getElementById('stone-dim').textContent = `${s.w}×${s.h}×${s.d} cm`;
+  document.querySelectorAll('#stones .chip').forEach(c => c.classList.toggle('on', c.dataset.id === id));
+
+  const stoneH = s.h/100, stoneW = s.w/100, stoneD = s.d/100;
+  // museum-style: bring the stone's center to ~0.9 m; small stones get taller plinths
+  const pedH = Math.min(0.95, Math.max(0.30, 0.90 - stoneH/2));
+  const pedW = Math.max(0.22, stoneW * 1.25), pedD = Math.max(0.22, stoneD * 1.25);
+  const top = pedH + stoneH/2;
+
+  if (ped) { scene.remove(ped); ped.geometry.dispose(); }
+  ped = new THREE.Mesh(
+    new RoundedBoxGeometry(pedW, pedH, pedD, 4, 0.02),
+    new THREE.MeshStandardMaterial({ color: 0xece7dd, roughness: 0.55, metalness: 0.0, envMapIntensity: 0.5 })
+  );
+  ped.position.set(0, pedH/2, 0); ped.castShadow = true; ped.receiveShadow = true;
+  scene.add(ped);
+
+  if (stoneGroup) scene.remove(stoneGroup);
+  loader.load(s.glb, (gltf) => {
+    const stone = gltf.scene;
+    let box = new THREE.Box3().setFromObject(stone);
+    const size = new THREE.Vector3(); box.getSize(size);
+    stone.scale.setScalar(stoneH / size.y);
+    box = new THREE.Box3().setFromObject(stone);
+    const c = new THREE.Vector3(); box.getCenter(c);
+    stone.position.x -= c.x; stone.position.z -= c.z;
+    stone.position.y -= box.min.y; stone.position.y += pedH;
+    stone.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    stoneGroup = stone; scene.add(stone);
+  }, undefined, () => fail(`Could not load <b>${s.glb}</b> — generate it with gen-stone3d.mjs.`));
+
+  // reframe camera
+  const rad = Math.max(1.4, stoneW * 2.6 + 1.0);
+  controls.target.set(0, top, 0);
+  if (AZ !== null) camera.position.set(Math.sin(AZ)*rad, top + 0.25, Math.cos(AZ)*rad);
+  else camera.position.set(0, top + 0.25, rad);
+  controls.update();
+}
+
+loadRoom('out/room.jpg');
+loadStone(current);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+// ---- UI: presets + stone picker ----
+const presets = [
+  'a warm Scandinavian living room with light oak floor and big windows',
+  'a moody industrial loft, concrete, black steel, dramatic side light',
+  'a serene Japanese tatami room, shoji screens, soft daylight',
+  'a luxury marble gallery, gold accents, polished floor',
+  'a cozy cabin interior, timber walls, fireplace glow, evening',
+];
+const pc = document.getElementById('presets');
+presets.forEach(p => { const el=document.createElement('span'); el.className='chip'; el.textContent=p.split(',')[0];
+  el.onclick=()=>{ document.getElementById('prompt').value=p; }; pc.appendChild(el); });
+
+const sc = document.getElementById('stones');
+Object.entries(STONES).forEach(([id, s]) => { const el=document.createElement('span'); el.className='chip'; el.dataset.id=id;
+  el.textContent=s.name; el.onclick=()=>loadStone(id); sc.appendChild(el); });
+
+const promptEl = document.getElementById('prompt');
+const goEl = document.getElementById('go');
+const statusEl = document.getElementById('status');
+goEl.onclick = async () => {
+  const prompt = promptEl.value.trim(); if (!prompt) return;
+  goEl.disabled = true;
+  statusEl.innerHTML = '<span class="spin"></span>generating 360° room… ~15s';
+  try {
+    const r = await fetch('/api/room', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ prompt }) });
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status);
+    loadRoom(j.url); statusEl.textContent = 'done ✓ look around';
+  } catch (e) { statusEl.textContent = 'failed: ' + e.message; }
+  finally { goEl.disabled = false; }
+};
+</script>
+</body>
+</html>
